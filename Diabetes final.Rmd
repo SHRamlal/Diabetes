@@ -1,0 +1,816 @@
+---
+title: "Classification of Diabetes Pima Indian patients using statistical and machine learning modelling techniques"
+output: 
+    html_document:
+      toc: true
+      toc_depth: 2
+      number_sections: true
+      fig_width: 10
+      fig_height: 6
+      fig_caption: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+if(!require(pacman)) install.packages("pacman", repos = "http://cran.us.r-project.org")
+
+pacman::p_load(tidyverse,dplyr, caret,  stringr, stringi,
+              lubridate, skimr, gtsummary, janitor, flextable, # tables design
+              scales, knitr, ggthemes, RKaggle,
+              corrplot, dlookr, patchwork, tinytex,  MLeval, kknn, nnet, kableExtra,
+              plotly, corrr, mice)
+
+#import the data using RKaggle - directly from Kaggle website
+data <- get_dataset("uciml/pima-indians-diabetes-database")
+
+```
+
+Author: Shardha Ramlal\
+\
+Date: `r Sys.Date()`
+
+# Introduction
+
+According to the World Health Organization, type 2 diabetes or diabetes
+mellitus occurs when body is unable to use the insulin it produces,
+which can lead to high blood sugar if left untreated. 1 The Pima Indian
+Population in Arizona has a high incidence of Diabetes, and as such has
+been studied extensively for this condition. 2,3 Factors that affect
+diabetes include genetic predisposition, not exercising enough and
+obesity.1 The research question of the study was to compare
+classification models for diabetes to determine the best model.
+
+# Methodology
+
+The dataset used in the study was the Pima Indians Diabetes Database4
+was originally from the National Institute of Diabetes and Kidney
+Disease, from the study conducted by Smith et al in 1988 2. The dataset
+was accessed via the url:
+<https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database/data>
+Inclusion criteria was defined as: females with an age greater than or
+equal to 21 years at the time of index examination. One examination was
+selected per subject – either diabetes diagnosed within five years or,
+an oral glucose tolerance test five or more years later failed to reveal
+diabetes mellitus.\
+Exclusion criteria was defined as if diabetes occurred within one year
+of an examination.
+
+Variables in the dataset under study were
+
+-   Pregnancies – Number of times pregnant
+
+-   Glucose – Plasma glucose concentration a 2 hours in an oral glucose
+    tolerance test
+
+-   BloodPressure - Diastolic blood pressure (mm Hg)
+
+-   SkinThickness - Triceps skin fold thickness (mm)
+
+-   Insulin - 2-Hour serum insulin (mu U/ml)
+
+-   BMI - Body mass index (weight in kg/(height in m)\^2
+
+-   DiabetesPedigreeFunction - Diabetes pedigree function which provides
+    a measure of expected genetric influence of eventual diabetes risk
+
+-   Age - Age (years)
+
+-   Outcome - Class variable (0 or 1) 268 of 768 are 1 (Diabetic), the
+    others are 0 (Not Diabetic)
+
+After examination of the data, some variables were missing – these were
+coded as zero’s in the dataset and included the variables: Glucose,
+Blood Pressure, Skin Thickness, Insulin, BMI. Values of zero were
+handled using imputation, similar to study done by Nassiwa and Zeng in
+2024 5 however this was done in R using the mice6 package with
+predictive mean matching . Ten multiple imputations were used of which
+the first was chosen.
+
+The dataset was then split into a 70 % training set and a 30 % test set.
+Predictors were scaled, centred and zero variance predictors were
+removed. To compensate for the class imbalance in the dataset,
+stratified 10 fold cross validation was used Supervised methods of
+binary classification consisting of both statistical and machine
+learning models were used. These included:
+
+-   Logistic Regression
+
+-   Elastic Net Regression
+
+-   Linear Discriminant Analysis
+
+-   Decision Tree
+
+-   Random Forest
+
+-   Support Vector Machine (Linear Kernel)
+
+-   Support Vector Machine (Radial Kernel)
+
+-   Neural Network
+
+-   K Nearest Neighbours
+
+Best models were then considered using  Receiver Operating Characteristic curve (ROC), Matthew's Correlation Coefficient (normalised version was considered to ensure the metrics were on the same scale), and Accuracy.
+
+# Results
+
+## Data Description and Visualisation
+
+### Missing data in dataset
+
+```{r, echo = FALSE , warning=FALSE, results='asis'}
+
+#change outcome to factor
+
+data$Outcome <- as.factor(data$Outcome)
+
+data$Outcome <- recode(data$Outcome,
+                       "1" = "diabetic",
+                       "0" = "not_diabetic")
+
+#explore the dataset
+
+# graphs
+# quality <- skim(data)
+# quality 
+
+###############################################################################
+
+# str(data)
+
+# Some 0's in Glucose, Blood Pressure, Skin Thickness, Insulin, BMI
+
+#replace with NA's to work with
+
+data$Glucose[data$Glucose == 0] <- NA
+data$SkinThickness[data$SkinThickness == 0] <- NA
+data$BloodPressure[data$BloodPressure == 0] <- NA
+data$Insulin[data$Insulin == 0] <- NA
+data$BMI[data$BMI == 0] <- NA
+
+# Isolate these for further observation
+
+# kable(colSums(is.na(data[, c("Glucose", "SkinThickness","BloodPressure","Insulin","BMI")])),
+#       col.names = "Missing Rows")
+
+#run and extracted
+
+# diagnose_web_report(data, output_format = "html")
+# 
+# 
+# data |>
+#   eda_web_report(target = "Outcome", subtitle = "diabetes",
+#                  output_dir = getwd(),
+#                  output_file = "EDA_Diabetes.html", theme = "blue",
+#                  browse=TRUE)
+# 
+# 
+# data |>
+#   diagnose_web_report(target = "Outcome", subtitle = "diabetes",
+#                  output_dir = getwd(),
+#                  output_file = "Diagnose_Diabetes.html", theme = "blue",
+#                  browse=TRUE)
+
+missing_pareto <- plot_na_pareto(data, only_na=TRUE, col="blue") +  
+  theme(text = element_text(size = 15)) 
+
+ggplotly(missing_pareto)
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+
+imp_data <- mice(data, m=10, seed = 1918)
+# imp_data - pmm used for Glucose, BloodPressure, SkinThickness, Insulin, BMI
+
+# Extract the first imputed dataset
+data <- complete(imp_data, 1)
+
+```
+
+### Summary Statistics after Imputation
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+data|> tbl_summary(include=everything(),
+                    by=Outcome,
+                    type = all_continuous() ~ "continuous2" , 
+                    statistic = list(all_continuous2() ~ c(
+                      "{mean} ({sd})",
+                      "{median} ({p25} {p75})",
+                      "{min}, {max}"),
+                      missing = "no") ,
+                    label = list(
+                      DiabetesPedigreeFunction = "Diabetes Pedigree Function",
+                      BloodPressure = "Blood Pressure" ))|>
+        bold_labels() |>  modify_header(
+    stat_1 ~ "**Not Diabetic**", stat_2 ~ "**Diabetic**") |>
+        as_flex_table() |> autofit() |> 
+  font(fontname = "Times New Roman", part = "all")
+
+
+```
+
+### Overview of Diabetic Patients in the Full Dataset
+
+```{r, echo = FALSE , warning=FALSE, messages=FALSE}
+
+colors <- c('rgb(211,94,96)', 'rgb(128,133,133)')
+labels = c('Not Diabetic','Diabetic')
+
+data |> group_by(Outcome) |> summarise(n=n()) |> 
+  mutate(perc = n / sum(n)) |> 
+  plot_ly(labels = ~labels, values = ~ perc, type = 'pie',
+          marker=list(colors=colors))|>
+  layout(xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         legend = list(orientation = 'h', x = 0.5, y = -0.1, xanchor = 'center'))
+
+
+
+```
+
+### Correlation of Predictors
+
+```{r, echo = FALSE , warning=FALSE, message=FALSE}
+
+corr_matrix <- data |>
+  correlate() |>
+  as_matrix(diagonal = 1)
+
+plot_ly(
+  z = corr_matrix,
+  x = colnames(corr_matrix),
+  y = rownames(corr_matrix),
+  type = "heatmap"
+)
+
+```
+
+## Model Building
+
+```{r echo = FALSE, results='hide', fig.show='hide' , message=FALSE, warning=FALSE, include=FALSE}
+
+# #Split dataset into training and test dataset
+ set.seed(1918)
+
+# #check for zero variance predictors
+nzv <- nearZeroVar(data, saveMetrics= TRUE)
+
+
+data_subset <- data[,-1] #remove the Outcome (no duplicates)
+
+index <- createDataPartition(data$Outcome,p=0.7,list=FALSE)
+
+train_raw <- data[index,]
+test_raw <- data[-index,]
+
+#Scale predictors by subtracting mean and dividing by standard deviation 
+
+preProcValues <- preProcess(train_raw, method = c("center", "scale"))
+
+train <- predict(preProcValues, train_raw)
+test <- predict(preProcValues, test_raw)
+
+#remove the unused datasets
+rm(test_raw, train_raw, preProcValues, index, nzv)
+
+#Deal with imbalance dataset by stratified cross validation
+cvIndex <- createFolds(train$Outcome, 10, returnTrain = TRUE)
+
+fitControl <- trainControl(index=cvIndex,
+                           method = "cv", 
+                           number = 10,
+                           classProbs = TRUE,
+                           savePredictions = TRUE,
+                           summaryFunction = defaultSummary )
+
+
+```
+
+```{r echo = FALSE, results='hide', fig.show='hide' , message=FALSE, warning=FALSE, include=FALSE, label=models}
+
+set.seed(1918)
+model.lr<- train(Outcome ~. , data = train,
+                        method = "glm",
+                        trControl = fitControl)
+
+model.lr
+
+summary(model.lr)
+
+model.lr.perf<-confusionMatrix.train(model.lr,norm="none")
+model.lr.perf
+
+
+res.lr <- evalm(model.lr,rlinethick = 1,
+                        title="Logistic Regression ROC for data",
+                      gname="LR")
+res.lr$roc
+
+res.lr$stdres
+
+varImp(model.lr)
+
+model.lr$finalModel
+
+# Elastic Net Regression
+
+set.seed(1918)
+
+model.en <- train(Outcome ~. , data = train,
+                        method = "glmnet", family="binomial", 
+                        trControl = fitControl)
+
+model.en
+
+summary(model.en)
+
+model.en.perf<-confusionMatrix.train(model.en,norm="none")
+model.en.perf
+
+
+res.en <- evalm(model.en,rlinethick = 1,
+                        title="Elastic Net ROC for data",
+                      gname="Elastic Net")
+res.en$roc
+
+res.en$stdres
+
+varImp(model.en)
+
+# model.en$finalModel
+
+# Linear Discriminant Analysis
+
+
+set.seed(1918)
+model.lda <- train(Outcome ~. , data = train,
+                        method = "lda",
+                        trControl = fitControl)
+
+model.lda
+
+summary(model.lda)
+
+model.lda.perf<-confusionMatrix.train(model.lda ,norm="none")
+model.lda.perf
+
+
+res.lda <- evalm(model.lr,rlinethick = 1,
+                        title="Linear Discriminant Analysis ROC for data",
+                      gname="Linear Discriminant")
+res.lda$roc
+
+res.lda$stdres
+
+# varImp(model.lda)
+
+model.lda$finalModel
+
+# Decision Tree
+
+set.seed(1918)
+model.dt <-  train(Outcome ~. , data = train,
+                        method = "rpart",
+                        trControl = fitControl)
+
+model.dt
+
+summary(model.dt)
+
+varImp(model.dt)
+
+model.dt.perf<- confusionMatrix.train(model.dt,norm="none")
+
+
+model.dt.perf
+
+res.dt <- evalm(model.dt,rlinethick = 1,
+                     title="Decision Tree ROC for data",
+                     gname="Decision Tree")
+res.dt$roc
+res.dt$stdres
+
+# Random Forest
+
+
+set.seed(1918)
+
+model.rf <- train(Outcome ~. , data = train,
+                        method = "rf",
+                        trControl = fitControl)
+
+model.rf
+
+summary(model.rf)
+
+model.rf.perf<-confusionMatrix.train(model.rf,norm="none")
+model.rf.perf
+
+
+res.rf <- evalm(model.rf,rlinethick = 1,
+                        title="Random Forest ROC for data",
+                      gname="Random Forest")
+res.rf$roc
+
+res.rf$stdres
+
+varImp(model.rf)
+
+model.rf$finalModel
+
+# Support Vector Machine with Linear Kernel
+
+set.seed(1918)
+
+model.svm.linear  <- train(Outcome ~. , data = train,
+                        method = "svmLinear",
+                        trControl = fitControl)
+
+model.svm.linear 
+
+summary(model.svm.linear)
+
+
+model.svm.linear.perf<-confusionMatrix.train(model.svm.linear,norm="none")
+model.svm.linear.perf
+
+
+res.svm.linear <- evalm(model.svm.linear,rlinethick = 1,
+                        title="Support Vector Machine with Linear Kernel ROC for data",
+                      gname="SVM Linear")
+res.svm.linear$roc
+
+res.svm.linear$stdres
+
+# varImp(model.svm.linear)
+# 
+# ?VarImp
+
+model.svm.linear$finalModel
+
+
+# Support Vector Machine with Radial Basis Function Kernel
+
+set.seed(1918)
+
+model.svm.radial  <- train(Outcome ~. , data = train,
+                        method = "svmRadial",
+                        trControl = fitControl)
+
+model.svm.radial 
+
+summary(model.svm.radial)
+
+model.svm.radial.perf<-confusionMatrix.train(model.svm.radial,norm="none")
+model.svm.radial.perf
+
+
+res.svm.radial <- evalm(model.svm.radial,rlinethick = 1,
+                        title="Support Vector Machine with Radial Kernel ROC for data",
+                      gname="SVM Radial")
+res.svm.radial$roc
+
+res.svm.radial$stdres
+
+# varImp(model.svm.radial)
+# 
+# ?VarImp
+
+model.svm.radial$finalModel
+
+# Neural Network
+
+set.seed(1918)
+
+model.nn <- train(Outcome ~. , data = train,
+                        method = "nnet",
+                        trControl = fitControl)
+
+model.nn
+
+summary(model.nn)
+
+model.nn.perf<-confusionMatrix.train(model.nn,norm="none")
+model.nn.perf
+
+
+res.nn <- evalm(model.nn,rlinethick = 1,
+                        title="Neural Network ROC for data",
+                      gname="Neural Network")
+res.nn$roc
+
+res.nn$stdres
+
+varImp(model.nn)
+
+
+model.nn$finalModel
+
+
+# K Nearest Neighbours
+
+set.seed(1918)
+
+model.knn <- train(Outcome ~. , data = train, method = "knn",
+                        trControl = fitControl)
+
+model.knn
+
+summary(model.knn)
+
+model.knn.perf<-confusionMatrix.train(model.knn,norm="none")
+model.knn.perf
+
+
+res.knn <- evalm(model.knn,rlinethick = 1,
+                        title="K Nearest Neighbours ROC for data",
+                      gname="K Nearest Neighbours")
+res.knn$roc
+
+res.knn$stdres
+
+# varImp(model.knn)
+
+
+model.knn$finalModel
+
+```
+
+## Comparison of Accuracy of Training Models
+
+```{r echo = FALSE, warning=FALSE, label=results }
+
+metrics <- resamples(
+  list(Logistic_Regression = model.lr,
+       Elastic_Net = model.en,
+       Linear_Discriminant_Analysis = model.lda,
+       Decision_Tree=model.dt,
+       Random_Forest = model.rf, 
+       SVM_linear = model.svm.linear, 
+       SVM_radial = model.svm.radial,
+       Neural_Network = model.nn,
+       K_Nearest_Neighbours=model.knn
+  )
+)
+
+res_summary <- summary(metrics)
+
+acc <- as.data.frame(res_summary$statistics$Accuracy) 
+rownames(acc) <- c("Logistic Regression","Elastic Net",
+                           "Linear Discriminant Analysis",
+                           "Decision Tree",
+                           "Random Forest",
+                           "Support Vector Machine (Linear Kernel)",
+                           "Support Vector Machine (Radial Kernel)",
+                           "Neural Network",
+                           "K Nearest Neighbours")
+
+
+acc |>
+  kable(digits = 3, caption = "Model Comparison Metric: Accuracy (CV Folds)") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) |>
+  column_spec(1, bold = TRUE) 
+
+
+# dotplot(metrics) 
+
+
+
+```
+
+## Comparison of ROC of Training Models
+
+```{r echo = FALSE, warning=FALSE, message=FALSE ,label=roc_results}
+# ROC CURVE ANALYSIS 
+
+models <- list("Logistic Regression" = model.lr,
+       "Elastic Net" = model.en,
+       "Linear Discriminant Analysis" = model.lda,
+       "Decision Tree"=model.dt,
+       "Random Forest" = model.rf, 
+       "Support Vector Machine (Linear Kernel)" = model.svm.linear, 
+       "Support Vector Machine (Radial Kernel)" = model.svm.radial,
+       "Neural Network" = model.nn,
+       "K Nearest Neighbours"=model.knn
+)
+
+# models <- models[order(names(models))]
+
+evalm(models,gnames = names(models),
+  rlinethick = 0.8, fsize = 8, plots = "r", silent=TRUE, showplots = FALSE)$roc|> ggplotly()
+
+```
+
+## Performance Metrics of Training Models Summary
+
+```{r echo = FALSE, warning=FALSE ,label=tab_results}
+
+metrics.2 <- cbind(LR=res.lr$stdres,
+                         EN=res.en$stdres,
+                         LDA=res.lda$stdres,
+                         DT=res.dt$stdres,
+                         RF=res.rf$stdres,
+                         SVM.linear=res.svm.linear$stdres,
+                         SVM.radial=res.svm.radial$stdres,
+                         NN=res.nn$stdres,
+                         KNN=res.knn$stdres
+)
+
+
+metrics.2.test <- as.data.frame(
+  cbind(LR=metrics.2[[1]],
+        EN=metrics.2[[2]],
+        LDA=metrics.2[[3]],
+        DT=metrics.2[[4]],
+        RF=metrics.2[[5]],
+        SVM.linear=metrics.2[[6]],
+        SVM.radial=metrics.2[[7]],
+        NN=metrics.2[[8]],
+        KNN=metrics.2[[9]]))
+
+metrics.2.test   <- tibble::rownames_to_column(metrics.2.test, var = "Metrics")
+
+#remove CI's for clean output
+metrics.2.test <- metrics.2.test |> select(Metrics, LR.Score, EN.Score,LDA.Score,DT.Score,RF.Score,SVM.linear.Score,SVM.radial.Score, NN.Score, KNN.Score)
+
+names(metrics.2.test) <- c("Metric","Logistic Regression",
+                           "Elastic Net",
+                           "Linear Discriminant Analysis",
+                           "Decision Tree",
+                           "Random Forest",
+                           "Support Vector Machine (Linear Kernel)",
+                           "Support Vector Machine (Radial Kernel)",
+                           "Neural Network",
+                           "K Nearest Neighbours")
+metrics.2.test |>
+  kable(digits = 4, caption = "Model Comparison Metrics (0.5 cutoff)") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) |>
+  column_spec(1, bold = TRUE) 
+
+
+
+
+
+```
+
+
+# Performance Metrics of Test Dataset
+
+## Exploring the Accuracy of the Test Dataset
+
+```{r warning=FALSE, echo =FALSE, message=FALSE}
+#accuracy table 
+set.seed(1918)
+
+test_acc <- cbind(
+  confusionMatrix(predict(model.lr ,test), test$Outcome)$overall[1],
+  confusionMatrix(predict(model.en ,test), test$Outcome)$overall[1],
+  confusionMatrix(predict(model.lda ,test), test$Outcome)$overall[1],
+  confusionMatrix(predict(model.svm.linear ,test), test$Outcome)$overall[1],
+  confusionMatrix(predict(model.nn ,test), test$Outcome)$overall[1]
+)
+
+colnames(test_acc) <- c("Logistic Regression",
+                           "Elastic Net",
+                           "Linear Discriminant Analysis",
+                           "Support Vector Machine (Linear Kernel)",
+                           "Neural Network")
+
+test_acc |>
+  kable(digits = 3, caption = "Model Comparison Metric: Accuracy (Test dataset)") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) |>
+  column_spec(1, bold = TRUE)
+```
+
+
+## Comparison of ROC of Test Models
+
+```{r warning=FALSE, echo = FALSE, message=FALSE}
+# predicting the test data
+
+set.seed(1918)
+
+test_prob_lr <- predict(model.lr ,test,  type="prob")
+test_prob_lr$obs <- test$Outcome
+test_prob_lr$Group <- "Logistic Regression"
+
+
+set.seed(1918)
+
+test_prob_en <- predict(model.en ,test, type="prob")
+test_prob_en$obs <- test$Outcome
+test_prob_en$Group <- "Elastic Net"
+
+set.seed(1918)
+
+test_prob_lda <- predict(model.lda ,test,  type="prob")
+test_prob_lda$obs <- test$Outcome
+test_prob_lda$Group <- "Linear Discriminant Analysis"
+
+set.seed(1918)
+
+test_prob_svm.linear <- predict(model.svm.linear ,test,  type="prob")
+test_prob_svm.linear$obs <- test$Outcome
+test_prob_svm.linear$Group <- "Support Vector Machine (Linear Kernel)"
+
+set.seed(1918)
+
+test_prob_nn <- predict(model.nn ,test, type="prob")
+test_prob_nn$obs <- test$Outcome
+test_prob_nn$Group <- "Neural Network"
+
+test_comparison <- rbind(test_prob_lr, test_prob_en, test_prob_lda,
+                         test_prob_svm.linear, test_prob_nn)
+
+
+evalm(test_comparison, rlinethick = 0.8, fsize = 8, plots = "r", silent=TRUE, showplots = FALSE)$roc |> ggplotly()
+
+
+
+```
+
+## Performance Metrics of Test Models Summary
+
+```{r warning=FALSE, echo = FALSE, message=FALSE}
+
+res_test_comparison <- evalm(test_comparison, showplots = FALSE)
+
+final_metrics_test <- do.call(cbind, res_test_comparison$stdres)
+
+
+numeric_cols <- sapply(final_metrics_test, is.numeric)
+
+final_metrics_test[numeric_cols] <- round(final_metrics_test[numeric_cols], 3)
+
+
+final_metrics  <- tibble::rownames_to_column(final_metrics_test, var = "Metrics") |> 
+  select(Metrics, `Logistic Regression.Score`,
+                                         `Elastic Net.Score`,
+                                         `Linear Discriminant Analysis.Score`,
+                                         `Support Vector Machine (Linear Kernel).Score`,
+                                         `Neural Network.Score`)
+                                         
+names(final_metrics) <- c("Metric","Logistic Regression",
+                           "Elastic Net",
+                           "Linear Discriminant Analysis",
+                           "Support Vector Machine (Linear Kernel)",
+                           "Neural Network")
+final_metrics |>
+  kable(digits = 3, caption = "Final Model Comparison Metrics") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) |>
+  column_spec(1, bold = TRUE)
+
+```
+
+# Discusssion
+
+We used the Receiver Operating Characteristic (ROC) due to the imbalanced nature of the dataset as the best metric for comparison. The best models appeared to be logistic regression, elastic net regression, linear discriminant analysis and support vector machine with a linear kernel. These models had an ROC of 0.84.  
+
+The second metric considered, was the Matthew’s Correlation Coefficient (MCC). We considered the normMCC, which was the MCC scaled within the [0,1]7, yielding 1 as the best value and 0 as the worst value. High MCC values always correspond to high rates in sensitivity, specificity, precision and negative predictive value 7. 
+
+The highest MCC was from the Neural Network model at 0.516 (normMCC = 0.758), followed by the elastic net regression model at 0.483 (normMCC = 0.7415) and the support vector machine with linear kernel model at 0.471 (normMCC = 0.7355) Both logistic regression and linear discriminant analysis models had values of 0.469 (normMCC = 0.7345)
+
+Lastly looking at models according to accuracy metric are the neural network (78.3 %), elastic net regression (77.1 %), support vector machine with linear kernel (76.8%) , linear discriminant analysis (77.1%) and lastly logistic regression (76.6%).
+
+The models that underwent further exploration with the test set were the logistic regression, elastic net regression, linear discriminant analysis, support vector machine with linear kernel and the neural network. 
+
+After further exploration using the hold out set or test set, the highest ROC was still 0.84, however only Logistic Regression and Linear Discriminant analysis kept their performance consistent with the training set. The rest of models reduced performance at 0.83, except for the neural network which remained the same. 
+
+The second metric, normMCC, was highest in the test set for the support vector machine with linear kernel model at 0.7445, higher than its training set value. The elastic net regression model was 0.739, lower than its training data value. The neural network was next at 0.7365, lower than training data performance, followed by logistic regression at 0.735, which was higher than its training data performance. Lastly was the linear discriminant analysis at 0.729 which was lower than its training data performance.  
+
+Lastly looking at models performance according to the accuracy metric – the support vector machine with linear kernel had a performance of 77.8% accuracy, Elastic net had the second highest accuracy, at 77.4%, logistic regression and neural network had 77% accuracy and linear discriminant analysis has 76.5% accuracy. 
+
+
+# Conclusion
+
+The best model seem to be logistic regression – maintains higher accuracy, ROC consistency, higher normMCC than training data, also this was the simplest model, implying performance will be consistent on new datasets. 
+
+A more complex model, that gave good results was the support vector machine with linear using the normMCC value and accuracy, even better than the training dataset, which implies it will give good performance using unseen data. ROC was slightly lower than the training dataset. 
+
+
+# References
+1. 	Diabetes [Internet]. [cited 2026 Feb 15]. Available from: https://www.who.int/news-room/fact-sheets/detail/diabetes
+2. 	Smith JW, Everhart JE, Dickson WC, Knowler WC, Johannes RS. Using the ADAP Learning Algorithm to Forecast the Onset of Diabetes Mellitus. Proc Annu Symp Comput Appl Med Care. 1988 Nov 9;261–5. 
+3. 	Pearson ER. Dissecting the Etiology of Type 2 Diabetes in the Pima Indian Population. Diabetes. 2015 Nov 18;64(12):3993–5. 
+4. 	Pima Indians Diabetes Database [Internet]. [cited 2025 Nov 16]. Available from: https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database/data
+5. 	Nassiwa F, Zeng J. Evaluating Traditional Machine Learning Models for Predicting Diabetes Onset Using the Pima Indians Dataset. Annals of Medical and Health Sciences Research [Internet]. 2024 [cited 2026 Feb 9]; Available from: https://www.amhsr.org/abstract/evaluating-traditional-machine-learning-models-for-predicting-diabetes-onset-using-the-pima-indians-dataset-12913.html
+6. 	Tüzen MF. Handling Missing Data in R: A Comprehensive Guide | R-bloggers [Internet]. 2025 [cited 2026 Feb 9]. Available from: https://www.r-bloggers.com/2025/08/handling-missing-data-in-r-a-comprehensive-guide/
+7. 	Chicco D, Jurman G. The Matthews correlation coefficient (MCC) should replace the ROC AUC as the standard metric for assessing binary classification. BioData Mining. 2023 Feb 17;16(1):4. 
+8. 	The caret Package [Internet]. [cited 2025 Nov 18]. Available from: https://topepo.github.io/caret/index.html
+9. 	Presentation-Ready Data Summary and Analytic Result Tables [Internet]. [cited 2026 Jan 4]. Available from: https://www.danieldsjoberg.com/gtsummary/
+10. 	Scatter Plot Matrices - R Base Graphs - Easy Guides - Wiki - STHDA [Internet]. [cited 2026 Jan 4]. Available from: https://www.sthda.com/english/wiki/scatter-plot-matrices-r-base-graphs
+11. 	Li D. Chapter 9 Pie Chart | Basic R Guide for NSC Statistics [Internet]. [cited 2026 Jan 29]. Available from: https://bookdown.org/dli/rguide/pie-chart.html
+12. 	Pie chart with percentages in ggplot2 [Internet]. R CHARTS | A collection of charts and graphs made with the R programming language. 2021 [cited 2026 Jan 29]. Available from: https://r-charts.com/part-whole/pie-chart-percentages-ggplot2/
+13. 	OR R. Results from rfe function (caret) to compute average metrics - R [Internet]. Cross Validated. 2016 [cited 2026 Feb 1]. Available from: https://stats.stackexchange.com/q/214387
+14. 	Compare The Performance of Machine Learning Algorithms in R - MachineLearningMastery.com [Internet]. [cited 2026 Feb 1]. Available from: https://machinelearningmastery.com/compare-the-performance-of-machine-learning-algorithms-in-r/
+15. 	r - Why does plot gives wrong score of fits using MLeval package? - Stack Overflow [Internet]. [cited 2026 Feb 1]. Available from: https://stackoverflow.com/questions/67505412/why-does-plot-gives-wrong-score-of-fits-using-mleval-package
+16. 	Pie [Internet]. [cited 2026 Feb 1]. Available from: https://plotly.com/r/pie-charts/
+17. 	Heatmaps [Internet]. [cited 2026 Feb 1]. Available from: https://plotly.com/r/heatmaps/
+18. 	John CR. MLeval: Machine Learning Model Evaluation [Internet]. 2020 [cited 2026 Feb 2]. Available from: https://cran.r-project.org/web/packages/MLeval/index.html
+
